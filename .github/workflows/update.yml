@@ -51,6 +51,9 @@ jobs:
             git commit -m "Update meta data ($(date -u +%Y-%m-%dT%H:%MZ))"
             git push
           fi
-      - name: Purge CDN cache for the manifest
+      - name: Purge changed files from the jsDelivr cache
         if: success()
-        run: curl -fsS "https://purge.jsdelivr.net/gh/${{ github.repository }}@main/manifest.json" || true
+        run: |
+          for file in $(git diff --name-only HEAD~1 HEAD -- manifest.json data 2>/dev/null); do
+            curl -fsS "https://purge.jsdelivr.net/gh/${{ github.repository }}@main/$file" > /dev/null || true
+          done
