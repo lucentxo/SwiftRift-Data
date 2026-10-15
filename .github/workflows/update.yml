@@ -1,0 +1,56 @@
+name: Update meta data
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"   # every 6 hours
+  workflow_dispatch:
+    inputs:
+      max_requests:
+        description: "Request budget for this run"
+        default: "2400"
+      aggregate_only:
+        description: "Re-aggregate existing records without crawling"
+        type: boolean
+        default: false
+
+concurrency:
+  group: update-meta
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Crawl and aggregate
+        env:
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+          MAX_REQUESTS: ${{ github.event.inputs.max_requests || '2400' }}
+          MAX_HOURS: "5"
+        run: |
+          if [ "${{ github.event.inputs.aggregate_only }}" = "true" ]; then
+            python pipeline/crawl.py --aggregate-only
+          else
+            python pipeline/crawl.py
+          fi
+      - name: Commit data
+        run: |
+          git config user.name "swiftrift-data-bot"
+          git config user.email "swiftrift-data-bot@users.noreply.github.com"
+          git add manifest.json data state
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update meta data ($(date -u +%Y-%m-%dT%H:%MZ))"
+            git push
+          fi
+      - name: Purge CDN cache for the manifest
+        if: success()
+        run: curl -fsS "https://purge.jsdelivr.net/gh/${{ github.repository }}@main/manifest.json" || true
