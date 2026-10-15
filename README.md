@@ -1,13 +1,13 @@
 # SwiftRift Data
 
-Hosted meta data for [SwiftRift](https://github.com/) (macOS League of Legends companion): tier lists, builds,
+Hosted meta data for SwiftRift (macOS League of Legends companion): tier lists, builds,
 matchups and per-tier benchmarks, aggregated from ranked solo/duo matches through the Riot API.
 
 The app downloads `manifest.json`, then only the files it needs, through jsDelivr:
 
 ```
-https://cdn.jsdelivr.net/gh/<owner>/SwiftRift-Data@main/manifest.json
-https://cdn.jsdelivr.net/gh/<owner>/SwiftRift-Data@main/data/<patch>/tierlist/emerald_plus.json
+https://cdn.jsdelivr.net/gh/lucentxo/SwiftRift-Data@main/manifest.json
+https://cdn.jsdelivr.net/gh/lucentxo/SwiftRift-Data@main/data/<patch>/tierlist/emerald_plus.json
 ```
 
 ## Layout
