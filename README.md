@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="96" alt="SwiftRift logo"></p>
+
 # SwiftRift Data
 
 Hosted meta data for SwiftRift (macOS League of Legends companion): tier lists, builds,
