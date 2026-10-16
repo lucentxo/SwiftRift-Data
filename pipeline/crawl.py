@@ -13,6 +13,7 @@ import json
 import os
 import random
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -56,38 +57,76 @@ def load_records(patch):
         return []
 
 
-def crawl(client, static, max_requests, max_hours):
+def crawl(clients, static, max_requests, max_hours):
+    """Crawls every platform in parallel. Riot rate limits apply per region, so each platform runs in its own
+    thread with its own limiter; they share the seen-ID set and the output file."""
     seen = set(load_json(os.path.join(STATE, "seen.json"), []))
     deadline = time.time() + max_hours * 3600
-    week_ago = time.time() - 7 * 86400
-    new_records = 0
-
-    # Seed players from every tier so benchmarks cover the whole ladder; weight toward Emerald+.
-    players = []
-    for tier, division in CRAWL_TIERS:
-        entries = client.league_entries(tier, division)
-        random.shuffle(entries)
-        take = 40 if tier in ("EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER") else 12
-        players += [(e["puuid"], tier) for e in entries[:take] if e.get("puuid")]
-    random.shuffle(players)
+    lock = threading.Lock()
+    counts = {}
 
     with gzip.open(records_path(static.patch), "at") as out:
-        for puuid, tier in players:
-            if client.requests >= max_requests or time.time() > deadline:
-                break
-            for match_id in client.match_ids(puuid, start_time=week_ago, count=5):
-                if match_id in seen or client.requests + 2 > max_requests:
+        def worker(client):
+            counts[client.platform] = _crawl_platform(client, static, max_requests, deadline, seen, lock, out)
+
+        threads = [threading.Thread(target=worker, args=(client,), daemon=True) for client in clients]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    write_json(os.path.join(STATE, "seen.json"), sorted(seen)[-500_000:])
+    return counts
+
+
+def _crawl_platform(client, static, max_requests, deadline, seen, lock, out):
+    week_ago = time.time() - 7 * 86400
+    added = 0
+    players = []
+    for tier, division in CRAWL_TIERS:
+        high = tier in ("EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER")
+        for page in range(1, (3 if high else 2)):
+            try:
+                entries = client.league_entries(tier, division, page=page)
+            except Exception as error:  # one bad page shouldn't stop the platform
+                print("[{}] league page failed: {}".format(client.platform, error))
+                continue
+            random.shuffle(entries)
+            players += [(e["puuid"], tier) for e in entries[:(150 if high else 40)] if e.get("puuid")]
+    random.shuffle(players)
+    print("[{}] {} seed players".format(client.platform, len(players)))
+
+    for puuid, tier in players:
+        if client.requests >= max_requests or time.time() > deadline:
+            break
+        try:
+            match_ids = client.match_ids(puuid, start_time=week_ago, count=10)
+        except Exception as error:
+            print("[{}] match list failed: {}".format(client.platform, error))
+            continue
+        for match_id in match_ids:
+            with lock:
+                if match_id in seen:
                     continue
                 seen.add(match_id)
+            if client.requests + 2 > max_requests or time.time() > deadline:
+                break
+            try:
                 match = client.match(match_id)
                 if not match or not match["info"]["gameVersion"].startswith(static.patch + "."):
                     continue
                 record = summarize(match, client.timeline(match_id), static, tier)
-                if record:
+            except Exception as error:
+                print("[{}] {} failed: {}".format(client.platform, match_id, error))
+                continue
+            if record:
+                record["platform"] = client.platform
+                with lock:
                     out.write(json.dumps(record, separators=(",", ":")) + "\n")
-                    new_records += 1
-    write_json(os.path.join(STATE, "seen.json"), sorted(seen)[-200_000:])
-    return new_records
+                added += 1
+                if added % 250 == 0:
+                    print("[{}] {} matches, {} requests".format(client.platform, added, client.requests))
+    print("[{}] done: {} matches, {} requests".format(client.platform, added, client.requests))
+    return added
 
 
 def publish(static):
@@ -150,8 +189,10 @@ def _previous_patch(patch):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--platform", default=os.environ.get("RIOT_PLATFORM", "na1"))
-    parser.add_argument("--max-requests", type=int, default=int(os.environ.get("MAX_REQUESTS", "900")))
+    parser.add_argument("--platforms", default=os.environ.get("RIOT_PLATFORMS", "na1,euw1,kr,eun1"),
+                        help="comma-separated platforms, crawled in parallel")
+    parser.add_argument("--max-requests", type=int, default=int(os.environ.get("MAX_REQUESTS", "100000")),
+                        help="request budget per platform")
     parser.add_argument("--max-hours", type=float, default=float(os.environ.get("MAX_HOURS", "5")))
     parser.add_argument("--aggregate-only", action="store_true")
     args = parser.parse_args()
@@ -162,9 +203,9 @@ def main():
         key = os.environ.get("RIOT_API_KEY")
         if not key:
             sys.exit("RIOT_API_KEY is not set")
-        client = RiotClient(key, args.platform)
-        added = crawl(client, static, args.max_requests, args.max_hours)
-        print("Added {} matches using {} requests".format(added, client.requests))
+        clients = [RiotClient(key, platform.strip()) for platform in args.platforms.split(",") if platform.strip()]
+        counts = crawl(clients, static, args.max_requests, args.max_hours)
+        print("Added {} matches: {}".format(sum(counts.values()), counts))
     manifest = publish(static)
     print("Published {} files from {} matches".format(len(manifest["files"]), manifest["sampleSize"]))
 

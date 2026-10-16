@@ -80,17 +80,25 @@ def _top(values, n):
     return [v for v, _ in Counter(v for v in values if v).most_common(n)]
 
 
+MIN_BRACKET_GAMES = 30  # below this, builds for a role fall back to all ranks
+
+
 def builds_for(records, champion, static, bracket="emerald_plus"):
     by_role = defaultdict(list)
+    all_by_role = defaultdict(list)
     for record in records:
-        if not in_bracket(record, bracket):
-            continue
+        high = in_bracket(record, bracket)
         for p in record["participants"]:
             if p["champion"] == champion:
-                by_role[p["role"]].append(p)
+                all_by_role[p["role"]].append(p)
+                if high:
+                    by_role[p["role"]].append(p)
 
     roles = {}
-    for role, players in by_role.items():
+    for role in set(by_role) | set(all_by_role):
+        players, used = by_role.get(role, []), bracket
+        if len(players) < MIN_BRACKET_GAMES and len(all_by_role[role]) > len(players):
+            players, used = all_by_role[role], "all"
         if len(players) < 5:
             continue
         groups = defaultdict(list)
@@ -100,7 +108,8 @@ def builds_for(records, champion, static, bracket="emerald_plus"):
         ranked = sorted(groups.items(), key=lambda kv: -len(kv[1]))[:4]
         builds = [_build(core_pair, group, players, role, static) for core_pair, group in ranked if len(group) >= 2]
         if builds:
-            roles[role] = {"games": len(players), "winRate": rate(sum(p["win"] for p in players), len(players)), "builds": builds}
+            roles[role] = {"games": len(players), "winRate": rate(sum(p["win"] for p in players), len(players)),
+                           "bracket": used, "builds": builds}
     return {"champion": champion, "bracket": bracket, "roles": roles}
 
 
