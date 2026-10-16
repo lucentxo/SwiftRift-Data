@@ -130,17 +130,30 @@ def _build(core_pair, group, all_players, role, static):
     skill_sequence = _mode(full_skills, "") or _mode([p["skills"] for p in group], "")
     skill_wins = [p["win"] for p in group if p["skills"] == skill_sequence]
 
+    def share(predicate):
+        hits = [p for p in group if predicate(p)]
+        return "{:.0%} WR · {:.0%} pick".format(sum(p["win"] for p in hits) / len(hits), len(hits) / len(group)) if hits else None
+
     item_path = []
     if pet:
-        item_path.append({"kind": "junglePet", "title": "Jungle Pet", "itemIDs": [pet], "note": static.item_name(pet)})
+        pet_note = "{} · {}".format(static.item_name(pet).split(" ")[0], share(lambda p: p["pet"] == pet) or "")
+        item_path.append({"kind": "junglePet", "title": "Jungle Pet", "itemIDs": [pet], "note": pet_note.strip(" ·")})
     if starting:
-        item_path.append({"kind": "starting", "title": "Starting Items", "itemIDs": list(starting)})
+        item_path.append({"kind": "starting", "title": "Starting Items", "itemIDs": list(starting),
+                          "note": share(lambda p: tuple(p["start"]) == starting)})
     if first_back:
-        item_path.append({"kind": "firstBack", "title": "First Component", "itemIDs": list(first_back)})
+        names = " + ".join(static.item_name(i) for i in first_back[:2])
+        item_path.append({"kind": "firstBack", "title": "First Component", "itemIDs": list(first_back), "note": names})
     core_with_boots = core[:2] + ([boots] if boots else []) + core[2:]
-    item_path.append({"kind": "core", "title": "Core Items", "itemIDs": core_with_boots})
+    item_path.append({"kind": "core", "title": "Core Items", "itemIDs": core_with_boots,
+                      "note": "{:.0%} WR".format(sum(p["win"] for p in group) / len(group))})
     if fourth:
-        item_path.append({"kind": "fourthOptions", "title": "Fourth Item Options", "itemIDs": fourth})
+        rates = []
+        for item in fourth:
+            hits = [p for p in group if len(p["completed"]) > 3 and p["completed"][3] == item]
+            rates.append("{:.0%}".format(sum(p["win"] for p in hits) / len(hits)) if hits else "–")
+        item_path.append({"kind": "fourthOptions", "title": "Fourth Item Options", "itemIDs": fourth,
+                          "note": " / ".join(rates) + " WR"})
 
     games = len(group)
     return {

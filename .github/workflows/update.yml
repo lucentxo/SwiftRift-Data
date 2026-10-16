@@ -53,7 +53,11 @@ jobs:
             echo "No changes"
           else
             git commit -m "Update meta data ($(date -u +%Y-%m-%dT%H:%MZ))"
-            git push
+            # Code may have been pushed during a long crawl; rebase onto it so the data isn't lost.
+            for attempt in 1 2 3; do
+              git pull --rebase -X theirs origin main && git push && break
+              sleep 10
+            done
           fi
       - name: Purge changed files from the jsDelivr cache
         if: success()
